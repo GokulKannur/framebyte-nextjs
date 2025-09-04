@@ -2,12 +2,10 @@
 @tailwind components;
 @tailwind utilities;
 
-/* --- Base styles applied using Tailwind utilities --- */
 body {
-  @apply font-poppins; /* Set Poppins as the default font */
+  @apply font-poppins;
 }
 
-/* --- Styles copied directly from your original index.html --- */
 #hero-section {
   background-image: url('https://storage.googleapis.com/framebyte-e4123.firebasestorage.app/your-best-wallpaper.jpg');
   background-size: cover;
@@ -16,12 +14,15 @@ body {
 
 .masonry-gallery {
   column-gap: 1rem;
-  column-count: 2;
+  column-count: 1; /* Default to 1 column on extra-small screens */
 }
-@media (min-width: 768px) {
+@media (min-width: 640px) { /* sm breakpoint in Tailwind */
+  .masonry-gallery { column-count: 2; }
+}
+@media (min-width: 768px) { /* md breakpoint */
   .masonry-gallery { column-count: 3; }
 }
-@media (min-width: 1024px) {
+@media (min-width: 1024px) { /* lg breakpoint */
   .masonry-gallery { column-count: 4; }
 }
 

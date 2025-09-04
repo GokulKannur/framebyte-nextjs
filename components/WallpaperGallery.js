@@ -3,7 +3,12 @@ import WallpaperItem from './WallpaperItem';
 // Receive onWallpaperClick
 export default function WallpaperGallery({ wallpapers, onLikeToggle, onWallpaperClick }) {
   if (!wallpapers || wallpapers.length === 0) {
-    return <p className="text-center p-8">No wallpapers found matching your criteria.</p>;
+    return (
+      <div className="text-center p-8">
+        <p className="text-lg text-gray-500">No wallpapers found matching your criteria.</p>
+        <p className="text-sm text-gray-400 mt-2">Try a different category or reset your filters.</p>
+      </div>
+    );
   }
 
   return (

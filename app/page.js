@@ -9,25 +9,29 @@ import CategoryBar from '../components/CategoryBar';
 import WallpaperModal from '../components/WallpaperModal';
 import SkeletonCard from '../components/SkeletonCard';
 import { db } from '../lib/firebase';
-import { collection, getDocs, doc, updateDoc, increment, query, orderBy, limit, startAfter } from 'firebase/firestore';
+import { collection, getDocs, query, orderBy, limit, startAfter } from 'firebase/firestore';
+import { useSearchParams } from 'next/navigation';
 
 const enrichWallpapersWithDimensions = async (wallpapers) => {
-  const enrichedData = await Promise.all(
-    wallpapers.map(async (wallpaper) => {
-      if (wallpaper.width && wallpaper.height) {
-        const orientation = wallpaper.width > wallpaper.height ? 'desktop' : 'phone';
-        const resolution = wallpaper.width >= 3840 || wallpaper.height >= 2160 ? '4k' :
-          wallpaper.width >= 1920 || wallpaper.height >= 1080 ? 'hd' : 'sd';
-        return { ...wallpaper, orientation, resolution };
-      }
-
-      return new Promise(resolve => {
+  return Promise.all(
+    wallpapers.map((wallpaper) => {
+      return new Promise((resolve) => {
         const img = new Image();
         img.onload = () => {
           const orientation = img.naturalWidth > img.naturalHeight ? 'desktop' : 'phone';
-          const resolution = img.naturalWidth >= 3840 || img.naturalHeight >= 2160 ? '4k' :
-            img.naturalWidth >= 1920 || img.naturalHeight >= 1080 ? 'hd' : 'sd';
-          resolve({ ...wallpaper, width: img.naturalWidth, height: img.naturalHeight, orientation, resolution });
+          const resolution =
+            img.naturalWidth >= 3840 || img.naturalHeight >= 2160
+              ? '4k'
+              : img.naturalWidth >= 1920 || img.naturalHeight >= 1080
+              ? 'hd'
+              : 'sd';
+          resolve({
+            ...wallpaper,
+            width: img.naturalWidth,
+            height: img.naturalHeight,
+            orientation,
+            resolution,
+          });
         };
         img.onerror = () => {
           resolve({ ...wallpaper, width: null, height: null, orientation: null, resolution: null });
@@ -36,15 +40,17 @@ const enrichWallpapersWithDimensions = async (wallpapers) => {
       });
     })
   );
-  return enrichedData;
 };
 
 const PAGE_SIZE = 12;
 
 export default function HomePage() {
+  const searchParams = useSearchParams();
+  const initialFilter = searchParams.get('filter') || 'all';
+
   const [allWallpapers, setAllWallpapers] = useState([]);
   const [filteredWallpapers, setFilteredWallpapers] = useState([]);
-  const [activeFilter, setActiveFilter] = useState('all');
+  const [activeFilter, setActiveFilter] = useState(initialFilter);
   const [sortBy, setSortBy] = useState('default');
   const [searchQuery, setSearchQuery] = useState('');
   const [isLoading, setIsLoading] = useState(true);
@@ -56,10 +62,9 @@ export default function HomePage() {
   const [selectedWallpaper, setSelectedWallpaper] = useState(null);
   const [recommendations, setRecommendations] = useState([]);
 
-  // This function now ONLY fetches and adds wallpapers
   const fetchWallpapers = async (isInitial = false) => {
     if (!hasMore && !isInitial) return;
-    
+
     if (isInitial) {
       setIsLoading(true);
     } else {
@@ -67,12 +72,10 @@ export default function HomePage() {
     }
 
     try {
-      const wallpapersCol = collection(db, "wallpapers");
+      const wallpapersCol = collection(db, 'wallpapers');
       let q;
-      
-      // Reset for a new initial fetch
       const cursor = isInitial ? null : lastVisible;
-      
+
       if (cursor) {
         q = query(wallpapersCol, orderBy('uploadedAt', 'desc'), startAfter(cursor), limit(PAGE_SIZE));
       } else {
@@ -80,108 +83,113 @@ export default function HomePage() {
       }
 
       const snapshot = await getDocs(q);
-      const newWallpapers = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      const newWallpapers = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+
       const enrichedWallpapers = await enrichWallpapersWithDimensions(newWallpapers);
-      
+
       if (isInitial) {
         setAllWallpapers(enrichedWallpapers);
       } else {
-        setAllWallpapers(prev => [...prev, ...enrichedWallpapers]);
+        setAllWallpapers((prev) => [...prev, ...enrichedWallpapers]);
       }
-      
+
       const lastDoc = snapshot.docs[snapshot.docs.length - 1];
       setLastVisible(lastDoc);
 
       if (snapshot.docs.length < PAGE_SIZE) {
         setHasMore(false);
       }
-
     } catch (error) {
-      console.error("Failed to fetch wallpapers:", error);
+      console.error('Failed to fetch wallpapers:', error);
     } finally {
-      if(isInitial) setIsLoading(false);
+      if (isInitial) setIsLoading(false);
       setIsLoadingMore(false);
     }
   };
 
-  // This useEffect triggers a BRAND NEW search/filter, resetting the list
   useEffect(() => {
-    const applyFiltersAndSort = async () => {
-        // When a filter changes, we can't use the paginated list.
-        // We need to fetch ALL documents that match the criteria.
-        // For simplicity in this step, we will just filter the currently loaded wallpapers.
-        // A more advanced implementation would re-fetch from Firestore with new queries.
-        let processedData = [...allWallpapers];
+    fetchWallpapers(true);
+  }, []);
 
+  useEffect(() => {
+    const applyFiltersAndSort = () => {
+      let processedData = [...allWallpapers];
+
+      if (searchQuery.trim() !== '' || activeFilter !== 'all' || sortBy !== 'default') {
         if (sortBy === 'likes') {
-            processedData.sort((a, b) => (b.likes ?? 0) - (a.likes ?? 0));
+          processedData.sort((a, b) => (b.likes ?? 0) - (a.likes ?? 0));
         } else if (sortBy === 'downloads') {
-            processedData.sort((a, b) => (b.downloads ?? 0) - (a.downloads ?? 0));
+          processedData.sort((a, b) => (b.downloads ?? 0) - (a.downloads ?? 0));
         }
 
         if (searchQuery.trim() !== '') {
-            const lowerCaseQuery = searchQuery.toLowerCase();
-            processedData = allWallpapers.filter(wallpaper => { // Filter from the original full list
-                const titleMatch = (wallpaper.title || '').toLowerCase().includes(lowerCaseQuery);
-                const tagsMatch = Array.isArray(wallpaper.tags) && wallpaper.tags.some(tag => tag.toLowerCase().includes(lowerCaseQuery));
-                return titleMatch || tagsMatch;
-            });
+          const lowerCaseQuery = searchQuery.toLowerCase();
+          processedData = processedData.filter((wallpaper) => {
+            const titleMatch = (wallpaper.title || '').toLowerCase().includes(lowerCaseQuery);
+            const tagsMatch =
+              Array.isArray(wallpaper.tags) &&
+              wallpaper.tags.some((tag) => tag.toLowerCase().includes(lowerCaseQuery));
+            return titleMatch || tagsMatch;
+          });
         } else if (activeFilter !== 'all') {
-            processedData = allWallpapers.filter(w => { // Filter from the original full list
-                if (['phone', 'desktop'].includes(activeFilter)) {
-                    return w.orientation === activeFilter;
-                }
-                if (['4k', 'hd'].includes(activeFilter)) {
-                    return w.resolution === activeFilter;
-                }
-                if (Array.isArray(w.tags)) {
-                    return w.tags.map(t => t.toLowerCase()).includes(activeFilter);
-                }
-                return false;
-            });
+          processedData = processedData.filter((w) => {
+            if (['phone', 'desktop'].includes(activeFilter)) return w.orientation === activeFilter;
+            if (['4k', 'hd'].includes(activeFilter)) return w.resolution === activeFilter;
+            if (Array.isArray(w.tags)) return w.tags.map((t) => t.toLowerCase()).includes(activeFilter);
+            return false;
+          });
         }
-        
-        setFilteredWallpapers(processedData);
-        // When filters are active, we hide the "Load More" button
-        const isFiltered = activeFilter !== 'all' || searchQuery.trim() !== '' || sortBy !== 'default';
-        setHasMore(!isFiltered);
+        setHasMore(false);
+      } else {
+        setHasMore(allWallpapers.length >= PAGE_SIZE);
+      }
 
+      setFilteredWallpapers(processedData);
     };
 
     applyFiltersAndSort();
   }, [sortBy, searchQuery, activeFilter, allWallpapers]);
 
-
-  // Fetch initial data only once
   useEffect(() => {
-    fetchWallpapers(true);
-  }, []);
-  
-  // This useEffect is now only for extracting categories
-  useEffect(() => {
-    if (allWallpapers.length > 0) {
-      const allTags = new Set();
-      allWallpapers.forEach(wallpaper => {
-        if (Array.isArray(wallpaper.tags)) {
-          wallpaper.tags.forEach(tag => allTags.add(tag.toLowerCase()));
-        }
-      });
-      setCategories(Array.from(allTags).sort());
-    }
+    const allTags = new Set();
+    allWallpapers.forEach((wallpaper) => {
+      if (Array.isArray(wallpaper.tags)) {
+        wallpaper.tags.forEach((tag) => allTags.add(tag.toLowerCase()));
+      }
+    });
+    setCategories(Array.from(allTags).sort());
   }, [allWallpapers]);
 
-
   const generateRecommendations = (likedWallpaper) => {
-    // ... function remains the same
+    if (!likedWallpaper || !Array.isArray(likedWallpaper.tags) || likedWallpaper.tags.length === 0) {
+      setRecommendations([]);
+      return;
+    }
+    const likedTags = new Set(likedWallpaper.tags.map((t) => t.toLowerCase()));
+    const candidates = allWallpapers.filter((w) => {
+      if (w.id === likedWallpaper.id) return false;
+      if (!Array.isArray(w.tags)) return false;
+      return w.tags.some((tag) => likedTags.has(tag.toLowerCase()));
+    });
+    const finalRecommendations = candidates.sort((a, b) => (b.likes ?? 0) - (a.likes ?? 0)).slice(0, 3);
+    setRecommendations(finalRecommendations);
   };
+
   const handleLikeToggle = (wallpaper, newLikeCount) => {
-    // ... function remains the same
+    setAllWallpapers((currentWallpapers) =>
+      currentWallpapers.map((wp) => (wp.id === wallpaper.id ? { ...wp, likes: newLikeCount } : wp))
+    );
+    if (newLikeCount > (wallpaper.likes ?? 0)) {
+      generateRecommendations(wallpaper);
+    }
   };
+
   const openModal = (wallpaper) => {
-    // ... function remains the same
+    setSelectedWallpaper(wallpaper);
   };
+
   const closeModal = () => {
-    // ... function remains the same
+    setSelectedWallpaper(null);
   };
 
   return (
@@ -189,12 +197,7 @@ export default function HomePage() {
       <Header categories={categories} />
       <Hero searchQuery={searchQuery} setSearchQuery={setSearchQuery} />
       <div className="max-w-full mx-auto flex flex-row items-start px-6 pt-4">
-        <Sidebar 
-          sortBy={sortBy} 
-          activeFilter={activeFilter} 
-          setSortBy={setSortBy} 
-          setActiveFilter={setActiveFilter}
-        />
+        <Sidebar sortBy={sortBy} activeFilter={activeFilter} setSortBy={setSortBy} setActiveFilter={setActiveFilter} />
         <main className="flex-grow min-w-0">
           <FilterBar
             activeFilter={activeFilter}
@@ -207,11 +210,7 @@ export default function HomePage() {
             searchQuery={searchQuery}
           />
           {showCategories && (
-            <CategoryBar
-              categories={categories}
-              activeFilter={activeFilter}
-              setActiveFilter={setActiveFilter}
-            />
+            <CategoryBar categories={categories} activeFilter={activeFilter} setActiveFilter={setActiveFilter} />
           )}
 
           {recommendations.length > 0 && (
@@ -231,11 +230,7 @@ export default function HomePage() {
               </div>
             </div>
           ) : (
-            <WallpaperGallery
-              wallpapers={filteredWallpapers}
-              onLikeToggle={handleLikeToggle}
-              onWallpaperClick={openModal}
-            />
+            <WallpaperGallery wallpapers={filteredWallpapers} onLikeToggle={handleLikeToggle} onWallpaperClick={openModal} />
           )}
 
           <div className="text-center my-8">
@@ -247,19 +242,15 @@ export default function HomePage() {
                 Load More
               </button>
             )}
-            {isLoadingMore && (
-              <p className="text-gray-500">Loading more wallpapers...</p>
-            )}
-            {!hasMore && filteredWallpapers.length > 0 && (
-               <p className="text-gray-500">You've reached the end!</p>
+            {isLoadingMore && <p className="text-gray-500">Loading more wallpapers...</p>}
+            {!hasMore && filteredWallpapers.length >= PAGE_SIZE && (
+              <p className="text-gray-500">You've reached the end!</p>
             )}
           </div>
         </main>
       </div>
-      
-      {selectedWallpaper && (
-        <WallpaperModal wallpaper={selectedWallpaper} onClose={closeModal} />
-      )}
+
+      {selectedWallpaper && <WallpaperModal wallpaper={selectedWallpaper} onClose={closeModal} />}
     </main>
   );
 }
