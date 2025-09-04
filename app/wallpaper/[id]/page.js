@@ -1,3 +1,4 @@
+"use client";
 import Header from '../../../components/Header';
 import WallpaperDetails from '../../../components/WallpaperDetails';
 import { db } from '../../../lib/firebase';
